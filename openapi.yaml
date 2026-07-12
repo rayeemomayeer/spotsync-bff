@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: SpotSync BFF
+  version: 0.1.0
+  description: Better Auth session API and authenticated proxy to the Go reservation engine.
+servers:
+  - url: http://localhost:4000
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+  /api/auth/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Better Auth handler
+      responses:
+        "200":
+          description: Auth response
+    post:
+      summary: Better Auth handler
+      responses:
+        "200":
+          description: Auth response
+  /api/v1/{proxy+}:
+    parameters:
+      - name: proxy+
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Proxy to Go API with session → JWT bridge
+      responses:
+        "200":
+          description: Upstream response
+    post:
+      summary: Proxy to Go API
+      responses:
+        "200":
+          description: Upstream response
+  /api/stripe/webhook:
+    post:
+      summary: Stripe test-mode webhook
+      responses:
+        "200":
+          description: Received
