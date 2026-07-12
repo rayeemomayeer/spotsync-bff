@@ -12,6 +12,7 @@ import type { Env } from "./env.js";
 import { healthRouter } from "./routes/health.js";
 import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
+import { createNotifyRouter } from "./routes/notify.js";
 
 export function createApp(env: Env): Express {
   const app = express();
@@ -56,6 +57,14 @@ export function createApp(env: Env): Express {
   app.use(express.urlencoded({ extended: false }));
 
   app.use(healthRouter);
+
+  app.use(
+    "/api/notify",
+    createNotifyRouter({
+      notifyUrl: env.NOTIFY_URL,
+      notifyInternalToken: env.NOTIFY_INTERNAL_TOKEN,
+    }),
+  );
 
   app.use(
     "/api/v1",

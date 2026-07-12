@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().positive().default(8080),
+  PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url(),
@@ -12,6 +12,16 @@ const envSchema = z.object({
   JWT_EXPIRY_SECONDS: z.coerce.number().int().positive().default(300),
   STRIPE_SECRET_KEY: z.string().optional().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(""),
+  /** Optional spotsync-notify base URL (e.g. http://localhost:3100). */
+  NOTIFY_URL: z
+    .string()
+    .optional()
+    .default("")
+    .transform((v) => v.trim())
+    .refine((v) => v === "" || z.string().url().safeParse(v).success, {
+      message: "Invalid url",
+    }),
+  NOTIFY_INTERNAL_TOKEN: z.string().optional().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

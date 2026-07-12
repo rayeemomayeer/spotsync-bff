@@ -1,8 +1,9 @@
 # SpotSync BFF
 
 Express + TypeScript backend-for-frontend. Handles Better Auth (email/password),
-proxies `/api/v1/*` to the Go reservation API with a short-lived HS256 JWT, and
-exposes a Stripe TEST webhook stub.
+proxies `/api/v1/*` to the Go reservation API with a short-lived HS256 JWT,
+exposes a Stripe TEST webhook stub, and optionally forwards email/notify events
+to `spotsync-notify`.
 
 ## Stack
 
@@ -41,6 +42,13 @@ Signed HS256 with `JWT_SECRET` (same secret Go uses).
 | GET | `/healthz` | Liveness |
 | * | `/api/v1/*` | Session required → Go proxy |
 | POST | `/api/stripe/webhook` | Stripe TEST webhook stub |
+| POST | `/api/notify` | Optional forward to spotsync-notify |
+
+## Notify forward (optional)
+
+Set `NOTIFY_URL` (e.g. `http://localhost:3100`) and `NOTIFY_INTERNAL_TOKEN`
+(same as notify `INTERNAL_TOKEN`). Body matches notify event schema
+(`reservation_confirmed`, `password_reset`, …). Returns `503` when unset.
 
 ## Local run
 
@@ -59,6 +67,9 @@ Build / production:
 npm run build
 npm start
 ```
+
+Sibling services (separate repos): Go API (`SpotSync-server`), web (`spotsync-web`),
+notify (`spotsync-notify` on `:3100`).
 
 ## Render (free)
 

@@ -52,3 +52,30 @@ paths:
       responses:
         "200":
           description: Received
+  /api/notify:
+    post:
+      summary: Forward notify event to spotsync-notify (optional)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - reservation_confirmed
+                    - reservation_cancelled
+                    - password_reset
+                    - verify_email
+                    - org_invite
+                email:
+                  type: string
+                  format: email
+      responses:
+        "202":
+          description: Accepted by notify
+        "503":
+          description: NOTIFY_URL not configured
