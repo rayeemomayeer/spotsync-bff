@@ -1,6 +1,8 @@
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { betterAuth } from "better-auth";
 import { Pool } from "pg";
 import type { Env } from "./env.js";
+import { ensureGoUserId } from "./lib/go-user-bridge.js";
 
 export const roles = ["saas_admin", "org_admin", "driver"] as const;
 export type Role = (typeof roles)[number];
@@ -47,16 +49,81 @@ export function createAuth(env: Env) {
       user: {
         create: {
           before: async (user, ctx) => {
-            const body = ctx?.body as { role?: unknown } | undefined;
+            const body = ctx?.body as
+              | { role?: unknown; password?: string; name?: string }
+              | undefined;
+            const password = body?.password;
+            if (!password || password.length < 8) {
+              throw new APIError("BAD_REQUEST", {
+                message: "Password must be at least 8 characters",
+              });
+            }
+
+            let goUserId: number;
+            try {
+              goUserId = await ensureGoUserId(env.GO_API_BASE_URL, {
+                name: user.name || body?.name || "",
+                email: user.email,
+                password,
+              });
+            } catch (err) {
+              throw new APIError("BAD_REQUEST", {
+                message:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to provision Go user for bridge",
+              });
+            }
+
             return {
               data: {
                 ...user,
                 role: resolveSignupRole(body?.role),
+                goUserId,
               },
             };
           },
         },
       },
+    },
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-in/email") return;
+
+        const session = ctx.context.newSession;
+        if (!session) return;
+        const user = session.user as {
+          id: string;
+          email: string;
+          name?: string;
+          goUserId?: number | null;
+        };
+        if (
+          user.goUserId != null &&
+          Number.isInteger(user.goUserId) &&
+          user.goUserId >= 1
+        ) {
+          return;
+        }
+
+        const body = ctx.body as { password?: string } | undefined;
+        if (!body?.password) return;
+
+        try {
+          const goUserId = await ensureGoUserId(env.GO_API_BASE_URL, {
+            name: user.name || "",
+            email: user.email,
+            password: body.password,
+          });
+          await pool.query(
+            `UPDATE "user" SET "goUserId" = $1 WHERE id = $2`,
+            [goUserId, user.id],
+          );
+          user.goUserId = goUserId;
+        } catch (err) {
+          console.error("goUserId link on sign-in failed", err);
+        }
+      }),
     },
   });
 }

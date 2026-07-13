@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import type { Auth, Role } from "../auth.js";
 import { issueGoBridgeToken } from "../lib/go-jwt.js";
-import { createRequireSession } from "../middleware/session.js";
+import { createOptionalSession } from "../middleware/session.js";
 
 const HOP_BY_HOP = new Set([
   "connection",
@@ -28,36 +28,19 @@ export function createProxyRouter(opts: {
   const proxy: RequestHandler = async (req, res, next) => {
     try {
       const user = req.sessionUser;
-      if (!user) {
-        res.status(401).json({
-          success: false,
-          message: "unauthorized",
-          errors: { auth: "session required" },
-        });
-        return;
-      }
+      const incomingAuth = req.headers.authorization;
 
-      if (user.goUserId == null || !Number.isInteger(user.goUserId) || user.goUserId < 1) {
+      if (user && (user.goUserId == null || !Number.isInteger(user.goUserId) || user.goUserId < 1)) {
         res.status(403).json({
           success: false,
           message: "go user not linked",
           errors: {
             goUserId:
-              "set user.goUserId to the matching Go users.id before calling the API proxy",
+              "sign out/in once so BFF can link goUserId, or contact support",
           },
         });
         return;
       }
-
-      const token = await issueGoBridgeToken({
-        goUserId: user.goUserId,
-        role: user.role as Role,
-        secret: opts.jwtSecret,
-        expiresInSeconds: opts.jwtExpirySeconds,
-      });
-
-      const suffix = req.url || "/";
-      const target = new URL(`${base}/api/v1${suffix}`);
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
@@ -69,9 +52,23 @@ export function createProxyRouter(opts: {
           headers.set(key, String(value));
         }
       }
-      headers.set("authorization", `Bearer ${token}`);
+
+      if (user?.goUserId != null) {
+        const token = await issueGoBridgeToken({
+          goUserId: user.goUserId,
+          role: user.role as Role,
+          secret: opts.jwtSecret,
+          expiresInSeconds: opts.jwtExpirySeconds,
+        });
+        headers.set("authorization", `Bearer ${token}`);
+      } else if (typeof incomingAuth === "string" && incomingAuth.length > 0) {
+        headers.set("authorization", incomingAuth);
+      }
+
       headers.set("accept", headers.get("accept") ?? "application/json");
 
+      const suffix = req.url || "/";
+      const target = new URL(`${base}/api/v1${suffix}`);
       const method = req.method.toUpperCase();
       const hasBody = !["GET", "HEAD"].includes(method);
 
@@ -105,7 +102,7 @@ export function createProxyRouter(opts: {
     }
   };
 
-  router.use(createRequireSession(opts.auth));
+  router.use(createOptionalSession(opts.auth));
   router.all("/*", proxy);
 
   return router;

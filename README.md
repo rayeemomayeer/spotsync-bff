@@ -25,8 +25,9 @@ to `spotsync-notify`.
 
 ## Go JWT bridge
 
-Proxy requires `user.goUserId` (numeric, matches Go `users.id`). Set it in the
-Better Auth `user` row after linking/syncing with Go. Bridge JWT claims:
+Proxy requires `user.goUserId` (numeric, matches Go `users.id`). On email
+sign-up (and sign-in when missing), BFF calls Go `/auth/register` (or `/auth/login`
+on conflict) and stores the returned id on the Better Auth user. Bridge JWT claims:
 
 ```json
 { "id": 123, "role": "driver", "iat": ..., "exp": ... }
