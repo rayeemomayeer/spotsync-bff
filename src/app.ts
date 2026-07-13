@@ -90,6 +90,9 @@ export function createApp(env: Env): Express {
 
   const onError: ErrorRequestHandler = (err, _req, res, _next) => {
     console.error("[bff] unhandled error", err);
+    void import("./lib/sentry.js").then(({ Sentry }) => {
+      Sentry.captureException(err);
+    });
     res.status(500).json({
       success: false,
       message: "internal server error",
