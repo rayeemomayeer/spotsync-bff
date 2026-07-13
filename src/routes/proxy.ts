@@ -66,7 +66,7 @@ export function createProxyRouter(opts: {
         if (Array.isArray(value)) {
           for (const v of value) headers.append(key, v);
         } else {
-          headers.set(key, value);
+          headers.set(key, String(value));
         }
       }
       headers.set("authorization", `Bearer ${token}`);
