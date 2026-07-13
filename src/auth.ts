@@ -30,6 +30,15 @@ export function createAuth(env: Env) {
       enabled: true,
       minPasswordLength: 8,
     },
+    // Cross-origin: Vercel app → Render BFF. Lax cookies are dropped by browsers.
+    advanced: {
+      defaultCookieAttributes: {
+        sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+        secure: env.NODE_ENV === "production",
+        httpOnly: true,
+        partitioned: env.NODE_ENV === "production",
+      },
+    },
     user: {
       additionalFields: {
         role: {
