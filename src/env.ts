@@ -12,6 +12,8 @@ const envSchema = z.object({
   JWT_EXPIRY_SECONDS: z.coerce.number().int().positive().default(300),
   STRIPE_SECRET_KEY: z.string().optional().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(""),
+  STRIPE_PRICE_STARTER: z.string().optional().default(""),
+  STRIPE_PRICE_GROWTH: z.string().optional().default(""),
   /** Optional spotsync-notify base URL (e.g. http://localhost:3100). */
   NOTIFY_URL: z
     .string()

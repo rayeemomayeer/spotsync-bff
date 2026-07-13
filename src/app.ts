@@ -48,8 +48,12 @@ export function createApp(env: Env): Express {
   app.use(
     "/api/stripe",
     createStripeRouter({
+      auth,
       secretKey: env.STRIPE_SECRET_KEY,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+      frontendOrigin: env.FRONTEND_ORIGIN,
+      priceStarter: env.STRIPE_PRICE_STARTER,
+      priceGrowth: env.STRIPE_PRICE_GROWTH,
     }),
   );
 
