@@ -1,8 +1,10 @@
+import { randomBytes } from "node:crypto";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { betterAuth } from "better-auth";
 import { Pool } from "pg";
 import type { Env } from "./env.js";
 import { ensureGoUserId } from "./lib/go-user-bridge.js";
+import { forwardNotify } from "./lib/notify.js";
 
 export const roles = ["saas_admin", "org_admin", "driver"] as const;
 export type Role = (typeof roles)[number];
@@ -11,7 +13,23 @@ function resolveSignupRole(_requested: unknown): Role {
   return "driver";
 }
 
-export type Auth = ReturnType<typeof createAuth>;
+function mintBridgePassword(): string {
+  return `oauth.${randomBytes(24).toString("hex")}`;
+}
+
+async function notifyOrLog(
+  env: Env,
+  payload: Parameters<typeof forwardNotify>[2],
+): Promise<void> {
+  if (!env.NOTIFY_URL || !env.NOTIFY_INTERNAL_TOKEN) {
+    console.info("[auth] notify skipped (NOTIFY_URL/TOKEN unset)", payload.type, payload.email);
+    return;
+  }
+  const result = await forwardNotify(env.NOTIFY_URL, env.NOTIFY_INTERNAL_TOKEN, payload);
+  if (!result.ok) {
+    console.error("[auth] notify failed", payload.type, result.status, result.body);
+  }
+}
 
 export function createAuth(env: Env) {
   const pool = new Pool({
@@ -23,6 +41,7 @@ export function createAuth(env: Env) {
 
   const googleEnabled =
     env.GOOGLE_CLIENT_ID.length > 0 && env.GOOGLE_CLIENT_SECRET.length > 0;
+  const notifyEnabled = env.NOTIFY_URL.length > 0 && env.NOTIFY_INTERNAL_TOKEN.length > 0;
 
   return betterAuth({
     database: pool,
@@ -32,6 +51,24 @@ export function createAuth(env: Env) {
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
+      sendResetPassword: async ({ user, url }) => {
+        await notifyOrLog(env, {
+          type: "password_reset",
+          email: user.email,
+          reset_url: url,
+        });
+      },
+    },
+    emailVerification: {
+      sendOnSignUp: notifyEnabled,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: async ({ user, url }) => {
+        await notifyOrLog(env, {
+          type: "verify_email",
+          email: user.email,
+          verify_url: url,
+        });
+      },
     },
     ...(googleEnabled
       ? {
@@ -74,12 +111,15 @@ export function createAuth(env: Env) {
             const body = ctx?.body as
               | { role?: unknown; password?: string; name?: string }
               | undefined;
-            const password = body?.password;
-            if (!password || password.length < 8) {
+            const provided = typeof body?.password === "string" ? body.password : "";
+            // Email signup must send a real password. Social OAuth has none — mint a
+            // random Go bridge password the user never sees (login stays via Google).
+            if (provided.length > 0 && provided.length < 8) {
               throw new APIError("BAD_REQUEST", {
                 message: "Password must be at least 8 characters",
               });
             }
+            const password = provided.length >= 8 ? provided : mintBridgePassword();
 
             let goUserId: number;
             try {
@@ -149,6 +189,8 @@ export function createAuth(env: Env) {
     },
   });
 }
+
+export type Auth = ReturnType<typeof createAuth>;
 
 export type SessionUser = {
   id: string;

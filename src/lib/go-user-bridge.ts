@@ -71,16 +71,55 @@ async function postJSON<T>(
   url: string,
   body: unknown,
 ): Promise<{ ok: boolean; status: number; body: GoEnvelope<T> }> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body),
-  });
-  let parsed: GoEnvelope<T> = { success: false };
-  try {
-    parsed = (await res.json()) as GoEnvelope<T>;
-  } catch {
-    parsed = { success: false, message: "invalid JSON from Go API" };
+  const attempts = 5;
+  let lastStatus = 0;
+  let lastBody: GoEnvelope<T> = { success: false };
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      let parsed: GoEnvelope<T> = { success: false };
+      try {
+        parsed = (await res.json()) as GoEnvelope<T>;
+      } catch {
+        parsed = { success: false, message: "invalid JSON from Go API" };
+      }
+
+      lastStatus = res.status;
+      lastBody = parsed;
+
+      if (res.ok && parsed.success === true) {
+        return { ok: true, status: res.status, body: parsed };
+      }
+      // Do not retry client errors (except rate limit / request timeout).
+      if (
+        res.status >= 400 &&
+        res.status < 500 &&
+        res.status !== 408 &&
+        res.status !== 429
+      ) {
+        return { ok: false, status: res.status, body: parsed };
+      }
+    } catch {
+      /* Go cold start / network — retry */
+    }
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, Math.min(8_000, 1_200 * 2 ** i)));
+    }
   }
-  return { ok: res.ok && parsed.success === true, status: res.status, body: parsed };
+
+  return { ok: false, status: lastStatus || 503, body: lastBody };
 }

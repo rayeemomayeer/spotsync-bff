@@ -6,6 +6,7 @@ import express, {
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { Pool } from "pg";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
 import type { Env } from "./env.js";
@@ -15,11 +16,18 @@ import { createStripeRouter } from "./routes/stripe.js";
 import { createCheckoutRouter } from "./routes/checkout.js";
 import { createDemoRouter } from "./routes/demo.js";
 import { createNotifyRouter } from "./routes/notify.js";
+import { createPlatformUsersRouter } from "./routes/platform-users.js";
 import { attachDemoHeaders } from "./middleware/demo.js";
 
 export function createApp(env: Env): Express {
   const app = express();
   const auth = createAuth(env);
+  const platformPool = new Pool({
+    connectionString: env.DATABASE_URL,
+    max: 5,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
 
   app.set("trust proxy", 1);
 
@@ -71,10 +79,7 @@ export function createApp(env: Env): Express {
     }),
   );
 
-  app.use(
-    "/api/demo",
-    createDemoRouter({ auth, env }),
-  );
+  app.use("/api/demo", createDemoRouter({ auth, env }));
 
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));
@@ -89,6 +94,8 @@ export function createApp(env: Env): Express {
       notifyInternalToken: env.NOTIFY_INTERNAL_TOKEN,
     }),
   );
+
+  app.use("/api/platform", createPlatformUsersRouter({ auth, pool: platformPool }));
 
   app.use(
     "/api/v1",
