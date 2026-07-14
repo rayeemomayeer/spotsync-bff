@@ -15,6 +15,7 @@ import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
 import { createCheckoutRouter } from "./routes/checkout.js";
 import { createDemoRouter } from "./routes/demo.js";
+import { createSessionRouter } from "./routes/session.js";
 import { createNotifyRouter } from "./routes/notify.js";
 import { createPlatformUsersRouter } from "./routes/platform-users.js";
 import { createOrgApplyRouter } from "./routes/org-apply.js";
@@ -92,6 +93,11 @@ export function createApp(env: Env): Express {
   );
 
   app.use("/api/demo", createDemoRouter({ auth, env }));
+
+  app.use(
+    "/api/session",
+    createSessionRouter({ auth, env }),
+  );
 
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));
