@@ -132,21 +132,19 @@ export function createCheckoutRouter(opts: {
       const amountCents = quoteAmountCents(zone.price_per_hour, durationHours);
       const hours = Math.max(1, Math.min(24, durationHours));
       const origin = opts.env.FRONTEND_ORIGIN.replace(/\/$/, "");
-      const spotMeta =
-        spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0
-          ? { spot_id: String(spotIdRaw) }
-          : {};
-      const metadata = {
+      const metadata: Stripe.MetadataParam = {
         purpose: "driver_reservation",
         zone_id: String(zoneId),
         go_user_id: String(user.goUserId),
         license_plate: plate,
         duration_hours: String(hours),
-        ...spotMeta,
       };
+      if (spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0) {
+        metadata.spot_id = String(spotIdRaw);
+      }
 
       // Hosted Checkout (test mode) — do not embed Payment Element.
-      const session = await stripe.checkout.sessions.create({
+      const params: Stripe.Checkout.SessionCreateParams = {
         mode: "payment",
         success_url: `${origin}/book/${zoneId}?paid=1`,
         cancel_url: `${origin}/book/${zoneId}?checkout=cancel`,
@@ -166,7 +164,8 @@ export function createCheckoutRouter(opts: {
             },
           },
         ],
-      });
+      };
+      const session = await stripe.checkout.sessions.create(params);
 
       if (!session.url) {
         res.status(502).json({
