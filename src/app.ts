@@ -10,7 +10,7 @@ import { Pool } from "pg";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
 import type { Env } from "./env.js";
-import { healthRouter, createReadyRouter } from "./routes/health.js";
+import { createHealthRouter, createReadyRouter } from "./routes/health.js";
 import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
 import { createCheckoutRouter } from "./routes/checkout.js";
@@ -84,7 +84,7 @@ export function createApp(env: Env): Express {
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));
 
-  app.use(healthRouter);
+  app.use(createHealthRouter(env));
   app.use(createReadyRouter(env.GO_API_BASE_URL));
 
   app.use(

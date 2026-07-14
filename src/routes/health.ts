@@ -1,11 +1,18 @@
 import { Router } from "express";
+import type { Env } from "../env.js";
 import { upstreamFetch } from "../lib/upstream-fetch.js";
 
-export const healthRouter = Router();
+export function createHealthRouter(env: Env) {
+  const router = Router();
+  const googleOauth =
+    env.GOOGLE_CLIENT_ID.length > 0 && env.GOOGLE_CLIENT_SECRET.length > 0;
 
-healthRouter.get("/healthz", (_req, res) => {
-  res.status(200).json({ ok: true });
-});
+  router.get("/healthz", (_req, res) => {
+    res.status(200).json({ ok: true, google_oauth: googleOauth });
+  });
+
+  return router;
+}
 
 export function createReadyRouter(goApiBaseUrl: string) {
   const router = Router();
