@@ -77,7 +77,7 @@ export function createCheckoutRouter(opts: {
     }
   };
 
-  const paymentIntent: RequestHandler = async (req, res) => {
+  const driverCheckoutSession: RequestHandler = async (req, res) => {
     if (!stripe) {
       res.status(503).json({
         success: false,
@@ -131,46 +131,67 @@ export function createCheckoutRouter(opts: {
       const zone = await fetchGoZone(opts.env, zoneId);
       const amountCents = quoteAmountCents(zone.price_per_hour, durationHours);
       const hours = Math.max(1, Math.min(24, durationHours));
+      const origin = opts.env.FRONTEND_ORIGIN.replace(/\/$/, "");
+      const spotMeta =
+        spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0
+          ? { spot_id: String(spotIdRaw) }
+          : {};
+      const metadata = {
+        purpose: "driver_reservation",
+        zone_id: String(zoneId),
+        go_user_id: String(user.goUserId),
+        license_plate: plate,
+        duration_hours: String(hours),
+        ...spotMeta,
+      };
 
-      const pi = await stripe.paymentIntents.create({
-        amount: amountCents,
-        currency: "usd",
-        automatic_payment_methods: { enabled: true },
-        metadata: {
-          zone_id: String(zoneId),
-          go_user_id: String(user.goUserId),
-          license_plate: plate,
-          duration_hours: String(hours),
-          ...(spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0
-            ? { spot_id: String(spotIdRaw) }
-            : {}),
-        },
+      // Hosted Checkout (test mode) — do not embed Payment Element.
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        success_url: `${origin}/book/${zoneId}?paid=1`,
+        cancel_url: `${origin}/book/${zoneId}?checkout=cancel`,
+        client_reference_id: String(user.goUserId),
+        metadata,
+        payment_intent_data: { metadata },
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: amountCents,
+              product_data: {
+                name: `${zone.name} parking`,
+                description: `${hours}h @ $${zone.price_per_hour.toFixed(2)}/hr · plate ${plate}`,
+              },
+            },
+          },
+        ],
       });
 
-      if (!pi.client_secret) {
+      if (!session.url) {
         res.status(502).json({
           success: false,
-          message: "payment intent missing client secret",
-          errors: { stripe: "no client_secret" },
+          message: "checkout session missing url",
+          errors: { stripe: "no redirect url" },
         });
         return;
       }
 
       res.status(200).json({
         success: true,
-        message: "payment intent created",
+        message: "checkout session created",
         data: {
-          client_secret: pi.client_secret,
-          payment_intent_id: pi.id,
+          url: session.url,
+          id: session.id,
           amount_cents: amountCents,
           currency: "usd",
         },
       });
     } catch (err) {
-      console.error("[checkout] payment-intent failed", err);
+      console.error("[checkout] session create failed", err);
       res.status(502).json({
         success: false,
-        message: "payment intent failed",
+        message: "checkout session failed",
         errors: { stripe: err instanceof Error ? err.message : "unknown" },
       });
     }
@@ -358,7 +379,9 @@ export function createCheckoutRouter(opts: {
   };
 
   router.post("/checkout/quote", json(), createRequireSession(opts.auth), quote);
-  router.post("/checkout/payment-intent", json(), createRequireSession(opts.auth), paymentIntent);
+  router.post("/checkout/session", json(), createRequireSession(opts.auth), driverCheckoutSession);
+  /** @deprecated Prefer POST /checkout/session (hosted Checkout). Kept for old clients. */
+  router.post("/checkout/payment-intent", json(), createRequireSession(opts.auth), driverCheckoutSession);
   router.post("/checkout/demo-confirm", json(), createRequireSession(opts.auth), demoConfirm);
   router.post(
     "/payments/:id/refund",
@@ -374,7 +397,42 @@ export async function fulfillDriverPaymentIntent(
   env: Env,
   intent: Stripe.PaymentIntent,
 ): Promise<void> {
-  const meta = intent.metadata ?? {};
+  await fulfillDriverPaid(
+    env,
+    intent.id,
+    intent.amount_received || intent.amount,
+    intent.currency,
+    intent.metadata ?? {},
+  );
+}
+
+export async function fulfillDriverCheckoutSession(
+  env: Env,
+  session: Stripe.Checkout.Session,
+): Promise<void> {
+  const pi =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id;
+  if (!pi) {
+    throw new Error("checkout session missing payment_intent");
+  }
+  await fulfillDriverPaid(
+    env,
+    pi,
+    session.amount_total ?? 0,
+    session.currency ?? "usd",
+    session.metadata ?? {},
+  );
+}
+
+async function fulfillDriverPaid(
+  env: Env,
+  paymentIntentId: string,
+  amountCents: number,
+  currency: string,
+  meta: Stripe.Metadata,
+): Promise<void> {
   const goUserId = Number(meta.go_user_id);
   const zoneId = Number(meta.zone_id);
   const plate = meta.license_plate?.trim() ?? "";
@@ -387,7 +445,7 @@ export async function fulfillDriverPaymentIntent(
     zoneId < 1 ||
     plate.length < 1
   ) {
-    throw new Error("payment_intent metadata incomplete");
+    throw new Error("driver payment metadata incomplete");
   }
 
   const body: { zone_id: number; license_plate: string; spot_id?: number } = {
@@ -398,11 +456,11 @@ export async function fulfillDriverPaymentIntent(
     body.spot_id = spotRaw;
   }
 
-  const reservation = await createGoReservation(env, goUserId, body, intent.id);
+  const reservation = await createGoReservation(env, goUserId, body, paymentIntentId);
   await recordGoPayment(env, goUserId, {
     reservation_id: reservation.id,
-    stripe_payment_intent_id: intent.id,
-    amount_cents: intent.amount_received || intent.amount,
-    currency: intent.currency,
+    stripe_payment_intent_id: paymentIntentId,
+    amount_cents: amountCents,
+    currency,
   });
 }
