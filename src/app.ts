@@ -13,6 +13,7 @@ import { healthRouter, createReadyRouter } from "./routes/health.js";
 import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
 import { createCheckoutRouter } from "./routes/checkout.js";
+import { createDemoRouter } from "./routes/demo.js";
 import { createNotifyRouter } from "./routes/notify.js";
 
 export function createApp(env: Env): Express {
@@ -66,6 +67,11 @@ export function createApp(env: Env): Express {
       env,
       secretKey: env.STRIPE_SECRET_KEY,
     }),
+  );
+
+  app.use(
+    "/api/demo",
+    createDemoRouter({ auth, env }),
   );
 
   app.use(express.json({ limit: "1mb" }));

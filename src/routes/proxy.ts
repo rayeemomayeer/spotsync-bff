@@ -88,6 +88,15 @@ export function createProxyRouter(opts: {
         headers.set("authorization", incomingAuth);
       }
 
+      const demoMode = req.headers["x-demo-mode"];
+      const demoSession = req.headers["x-demo-session-id"];
+      if (typeof demoMode === "string" && demoMode.length > 0) {
+        headers.set("x-demo-mode", demoMode);
+      }
+      if (typeof demoSession === "string" && demoSession.length > 0) {
+        headers.set("x-demo-session-id", demoSession);
+      }
+
       headers.set("accept", headers.get("accept") ?? "application/json");
 
       const suffix = req.url || "/";
