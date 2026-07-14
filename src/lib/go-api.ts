@@ -53,10 +53,29 @@ export async function fetchOrgMe(
   return json.data ?? null;
 }
 
+export async function fetchOrgById(
+  env: Env,
+  orgId: number,
+): Promise<GoOrganization | null> {
+  const goUserId = env.GO_PLATFORM_USER_ID;
+  const res = await goFetch(env, `/api/v1/orgs/${orgId}`, {
+    method: "GET",
+    goUserId,
+    role: "saas_admin",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`go org fetch failed (${res.status}): ${text}`);
+  }
+  const json = (await res.json()) as { data?: GoOrganization };
+  return json.data ?? null;
+}
+
 export async function patchOrgBillingPlan(
   env: Env,
   orgId: number,
-  plan: "starter" | "growth",
+  plan: "starter" | "growth" | "none",
   stripeCustomerId?: string,
 ): Promise<void> {
   const goUserId = env.GO_PLATFORM_USER_ID;
@@ -67,7 +86,7 @@ export async function patchOrgBillingPlan(
     role: "saas_admin",
     body: JSON.stringify({
       plan,
-      stripe_customer_id: stripeCustomerId ?? "",
+      ...(stripeCustomerId ? { stripe_customer_id: stripeCustomerId } : {}),
     }),
   });
 
@@ -75,6 +94,10 @@ export async function patchOrgBillingPlan(
     const text = await res.text();
     throw new Error(`go org plan patch failed (${res.status}): ${text}`);
   }
+}
+
+export async function clearOrgBillingPlan(env: Env, orgId: number): Promise<void> {
+  await patchOrgBillingPlan(env, orgId, "none");
 }
 
 export type GoZone = {

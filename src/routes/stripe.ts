@@ -2,11 +2,31 @@ import { Router, type RequestHandler, json, raw } from "express";
 import Stripe from "stripe";
 import type { Auth } from "../auth.js";
 import { createRequireSession } from "../middleware/session.js";
-import { fetchOrgMe, patchOrgBillingPlan } from "../lib/go-api.js";
+import {
+  clearOrgBillingPlan,
+  fetchOrgById,
+  fetchOrgMe,
+  patchOrgBillingPlan,
+  type GoOrganization,
+} from "../lib/go-api.js";
 import { fulfillDriverCheckoutSession, fulfillDriverPaymentIntent } from "./checkout.js";
 import type { Env } from "../env.js";
 
 type PlanKey = "starter" | "growth";
+
+function parseOrgId(raw: unknown): number | null {
+  if (raw == null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.trunc(n);
+}
+
+function orgIdFromStripeMeta(
+  meta: Stripe.Metadata | null | undefined,
+  clientReferenceId?: string | null,
+): number | null {
+  return parseOrgId(meta?.organization_id ?? clientReferenceId);
+}
 
 export function createStripeRouter(opts: {
   auth: Auth;
@@ -69,9 +89,9 @@ export function createStripeRouter(opts: {
       return;
     }
 
-    let orgMeta: string | undefined;
+    let org: GoOrganization | null = null;
     if (role === "org_admin") {
-      const org = await fetchOrgMe(opts.env, goUserId, role);
+      org = await fetchOrgMe(opts.env, goUserId, role);
       if (!org) {
         res.status(404).json({
           success: false,
@@ -88,18 +108,54 @@ export function createStripeRouter(opts: {
         });
         return;
       }
-      orgMeta = String(org.id);
-    } else if (body.organization_id != null) {
-      orgMeta = String(body.organization_id);
+    } else {
+      const orgId = parseOrgId(body.organization_id);
+      if (orgId == null) {
+        res.status(400).json({
+          success: false,
+          message: "organization_id required",
+          errors: { organization_id: "required for platform checkout" },
+        });
+        return;
+      }
+      org = await fetchOrgById(opts.env, orgId);
+      if (!org) {
+        res.status(404).json({
+          success: false,
+          message: "organization not found",
+          errors: { organization_id: "unknown org" },
+        });
+        return;
+      }
+      if (org.status !== "active") {
+        res.status(403).json({
+          success: false,
+          message: "organization not approved",
+          errors: { organization: "approve org before subscribe" },
+        });
+        return;
+      }
     }
 
+    if (org.billing_plan === plan) {
+      res.status(409).json({
+        success: false,
+        message: "already on this plan",
+        errors: {
+          plan: "org already subscribed to this plan — use billing portal to manage",
+        },
+      });
+      return;
+    }
+
+    const orgMeta = String(org.id);
     const origin = opts.frontendOrigin.replace(/\/$/, "");
     const successPath = role === "org_admin" ? "/org/billing" : "/platform/billing";
     const successUrl = `${origin}${successPath}?checkout=success`;
     const cancelUrl = `${origin}${successPath}?checkout=cancel`;
     const metadata: Stripe.MetadataParam = {
       plan,
-      ...(orgMeta ? { organization_id: orgMeta } : {}),
+      organization_id: orgMeta,
       actor_email: req.sessionUser?.email ?? "",
     };
 
@@ -111,6 +167,7 @@ export function createStripeRouter(opts: {
         cancelUrl,
         clientReferenceId: orgMeta,
         metadata,
+        customerId: org.stripe_customer_id ?? undefined,
       });
 
       if (!session.url) {
@@ -198,9 +255,8 @@ export function createStripeRouter(opts: {
         }
       } else {
         const plan = session.metadata?.plan;
-        const orgRaw = session.metadata?.organization_id ?? session.client_reference_id;
-        const orgId = orgRaw ? Number(orgRaw) : NaN;
-        if ((plan === "starter" || plan === "growth") && Number.isFinite(orgId) && orgId > 0) {
+        const orgId = orgIdFromStripeMeta(session.metadata, session.client_reference_id);
+        if ((plan === "starter" || plan === "growth") && orgId != null) {
           try {
             await patchOrgBillingPlan(
               opts.env,
@@ -225,6 +281,29 @@ export function createStripeRouter(opts: {
         } catch (err) {
           console.error("[stripe] driver payment fulfillment failed", err);
           res.status(502).json({ received: false, error: "reservation fulfillment failed" });
+          return;
+        }
+      }
+    }
+
+    if (
+      event.type === "customer.subscription.deleted" ||
+      event.type === "customer.subscription.updated"
+    ) {
+      const sub = event.data.object as Stripe.Subscription;
+      const orgId = orgIdFromStripeMeta(sub.metadata);
+      const shouldClear =
+        event.type === "customer.subscription.deleted" ||
+        sub.status === "canceled" ||
+        sub.status === "unpaid" ||
+        sub.status === "incomplete_expired";
+      if (shouldClear && orgId != null) {
+        try {
+          await clearOrgBillingPlan(opts.env, orgId);
+          console.info("[stripe] cleared org billing_plan", { orgId, status: sub.status });
+        } catch (err) {
+          console.error("[stripe] failed to clear org plan", err);
+          res.status(502).json({ received: false, error: "plan clear failed" });
           return;
         }
       }
@@ -275,8 +354,30 @@ export function createStripeRouter(opts: {
       }
       customerId = org.stripe_customer_id;
     } else {
-      const body = req.body as { stripe_customer_id?: string };
-      customerId = body.stripe_customer_id?.trim();
+      const body = req.body as { stripe_customer_id?: string; organization_id?: number | string };
+      if (body.stripe_customer_id?.trim()) {
+        customerId = body.stripe_customer_id.trim();
+      } else {
+        const orgId = parseOrgId(body.organization_id);
+        if (orgId == null) {
+          res.status(400).json({
+            success: false,
+            message: "organization_id required",
+            errors: { organization_id: "required for platform portal" },
+          });
+          return;
+        }
+        const org = await fetchOrgById(opts.env, orgId);
+        if (!org?.stripe_customer_id) {
+          res.status(404).json({
+            success: false,
+            message: "no stripe customer",
+            errors: { stripe: "org has no Stripe customer yet" },
+          });
+          return;
+        }
+        customerId = org.stripe_customer_id;
+      }
     }
 
     if (!customerId) {
@@ -359,6 +460,7 @@ async function createSubscriptionCheckout(
     cancelUrl: string;
     clientReferenceId?: string;
     metadata: Stripe.MetadataParam;
+    customerId?: string;
   },
 ): Promise<Stripe.Checkout.Session> {
   const base: Stripe.Checkout.SessionCreateParams = {
@@ -367,6 +469,10 @@ async function createSubscriptionCheckout(
     cancel_url: opts.cancelUrl,
     client_reference_id: opts.clientReferenceId,
     metadata: opts.metadata,
+    subscription_data: {
+      metadata: opts.metadata,
+    },
+    ...(opts.customerId ? { customer: opts.customerId } : {}),
   };
 
   if (opts.priceId.trim()) {
