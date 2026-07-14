@@ -233,7 +233,34 @@ export function createCheckoutRouter(opts: {
         user.role,
         paymentId,
       );
-      if (!payment.reservation_id) {
+
+      const reservationId = payment.reservation_id;
+      const alreadyRefunded = payment.status === "refunded";
+      const piId = payment.stripe_payment_intent_id ?? "";
+      const isDemoPayment = piId.startsWith("demo_pi_");
+
+      // Idempotent: prior refund may have succeeded while cancel failed.
+      if (alreadyRefunded) {
+        if (reservationId) {
+          try {
+            await cancelGoReservation(opts.env, user.goUserId, reservationId);
+          } catch (cancelErr) {
+            console.warn("[checkout] cancel after prior refund", cancelErr);
+          }
+        }
+        res.status(200).json({
+          success: true,
+          message: "already refunded",
+          data: {
+            refund_id: null,
+            reservation_id: reservationId ?? null,
+            idempotent: true,
+          },
+        });
+        return;
+      }
+
+      if (!reservationId) {
         res.status(409).json({
           success: false,
           message: "payment not linked to reservation",
@@ -241,31 +268,59 @@ export function createCheckoutRouter(opts: {
         });
         return;
       }
-      if (payment.status === "refunded") {
-        res.status(409).json({
-          success: false,
-          message: "already refunded",
-          errors: { payment: "refunded" },
-        });
-        return;
+
+      let refundId: string;
+      if (isDemoPayment) {
+        refundId = `demo_re_${Date.now()}`;
+      } else {
+        try {
+          const stripeRefund = await stripe.refunds.create({
+            payment_intent: piId,
+          });
+          refundId = stripeRefund.id;
+        } catch (stripeErr) {
+          const code =
+            stripeErr && typeof stripeErr === "object" && "code" in stripeErr
+              ? String((stripeErr as { code?: string }).code)
+              : "";
+          const msg = stripeErr instanceof Error ? stripeErr.message : String(stripeErr);
+          // Already refunded in Stripe — sync Go and cancel.
+          if (
+            code === "charge_already_refunded" ||
+            /already.?refund|charge_already_refunded/i.test(msg)
+          ) {
+            refundId = `sync_re_${Date.now()}`;
+          } else {
+            throw stripeErr;
+          }
+        }
       }
 
-      const stripeRefund = await stripe.refunds.create({
-        payment_intent: payment.stripe_payment_intent_id,
-      });
+      try {
+        await recordGoRefund(opts.env, user.goUserId, user.role, paymentId, {
+          stripe_refund_id: refundId,
+          amount_cents: payment.amount_cents,
+        });
+      } catch (goRefundErr) {
+        const msg = goRefundErr instanceof Error ? goRefundErr.message : String(goRefundErr);
+        // Go may already mark refunded after a partial prior attempt.
+        if (!/409|conflict|already/i.test(msg)) {
+          throw goRefundErr;
+        }
+      }
 
-      await recordGoRefund(opts.env, user.goUserId, user.role, paymentId, {
-        stripe_refund_id: stripeRefund.id,
-        amount_cents: payment.amount_cents,
-      });
-      await cancelGoReservation(opts.env, user.goUserId, payment.reservation_id);
+      try {
+        await cancelGoReservation(opts.env, user.goUserId, reservationId);
+      } catch (cancelErr) {
+        console.warn("[checkout] reservation cancel after refund", cancelErr);
+      }
 
       res.status(200).json({
         success: true,
         message: "refund processed",
         data: {
-          refund_id: stripeRefund.id,
-          reservation_id: payment.reservation_id,
+          refund_id: refundId,
+          reservation_id: reservationId,
         },
       });
     } catch (err) {
