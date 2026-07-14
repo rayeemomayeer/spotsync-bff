@@ -69,18 +69,6 @@ export function createStripeRouter(opts: {
       return;
     }
 
-    const price = priceIdFor(plan);
-    if (!price) {
-      res.status(503).json({
-        success: false,
-        message: "stripe price not configured",
-        errors: {
-          plan: plan === "growth" ? "STRIPE_PRICE_GROWTH missing" : "STRIPE_PRICE_STARTER missing",
-        },
-      });
-      return;
-    }
-
     let orgMeta: string | undefined;
     if (role === "org_admin") {
       const org = await fetchOrgMe(opts.env, goUserId, role);
@@ -107,19 +95,22 @@ export function createStripeRouter(opts: {
 
     const origin = opts.frontendOrigin.replace(/\/$/, "");
     const successPath = role === "org_admin" ? "/org/billing" : "/platform/billing";
+    const successUrl = `${origin}${successPath}?checkout=success`;
+    const cancelUrl = `${origin}${successPath}?checkout=cancel`;
+    const metadata: Stripe.MetadataParam = {
+      plan,
+      ...(orgMeta ? { organization_id: orgMeta } : {}),
+      actor_email: req.sessionUser?.email ?? "",
+    };
 
     try {
-      const session = await stripe.checkout.sessions.create({
-        mode: "subscription",
-        line_items: [{ price, quantity: 1 }],
-        success_url: `${origin}${successPath}?checkout=success`,
-        cancel_url: `${origin}${successPath}?checkout=cancel`,
-        client_reference_id: orgMeta,
-        metadata: {
-          plan,
-          ...(orgMeta ? { organization_id: orgMeta } : {}),
-          actor_email: req.sessionUser?.email ?? "",
-        },
+      const session = await createSubscriptionCheckout(stripe, {
+        plan,
+        priceId: priceIdFor(plan),
+        successUrl,
+        cancelUrl,
+        clientReferenceId: orgMeta,
+        metadata,
       });
 
       if (!session.url) {
@@ -341,4 +332,76 @@ export function createStripeRouter(opts: {
   );
 
   return router;
+}
+
+/** Amounts match /org/billing UI (test mode). */
+const PLAN_AMOUNT_CENTS: Record<PlanKey, number> = {
+  starter: 4900,
+  growth: 14900,
+};
+
+const PLAN_NAME: Record<PlanKey, string> = {
+  starter: "SpotSync Starter",
+  growth: "SpotSync Growth",
+};
+
+/**
+ * Prefer Dashboard price IDs when they belong to the same Stripe account as
+ * STRIPE_SECRET_KEY. Otherwise fall back to inline price_data (avoids 502
+ * when Price IDs were created in a different Stripe account).
+ */
+async function createSubscriptionCheckout(
+  stripe: Stripe,
+  opts: {
+    plan: PlanKey;
+    priceId: string;
+    successUrl: string;
+    cancelUrl: string;
+    clientReferenceId?: string;
+    metadata: Stripe.MetadataParam;
+  },
+): Promise<Stripe.Checkout.Session> {
+  const base: Stripe.Checkout.SessionCreateParams = {
+    mode: "subscription",
+    success_url: opts.successUrl,
+    cancel_url: opts.cancelUrl,
+    client_reference_id: opts.clientReferenceId,
+    metadata: opts.metadata,
+  };
+
+  if (opts.priceId.trim()) {
+    try {
+      return await stripe.checkout.sessions.create({
+        ...base,
+        line_items: [{ price: opts.priceId.trim(), quantity: 1 }],
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (!/No such price/i.test(msg)) {
+        throw err;
+      }
+      console.warn(
+        "[stripe] price id not on this Stripe account; using price_data fallback",
+        opts.priceId,
+      );
+    }
+  }
+
+  return stripe.checkout.sessions.create({
+    ...base,
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: PLAN_AMOUNT_CENTS[opts.plan],
+          recurring: { interval: "month" },
+          product_data: {
+            name: PLAN_NAME[opts.plan],
+            description: "SpotSync subscription (Stripe test mode)",
+          },
+        },
+      },
+    ],
+  });
 }
