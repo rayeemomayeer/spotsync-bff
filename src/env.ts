@@ -39,5 +39,13 @@ export function loadEnv(): Env {
       .join("; ");
     throw new Error(`Invalid environment: ${detail}`);
   }
-  return parsed.data;
+  const env = parsed.data;
+  const goOrigin = new URL(env.GO_API_BASE_URL).origin;
+  const bffOrigin = new URL(env.BETTER_AUTH_URL).origin;
+  if (goOrigin === bffOrigin) {
+    throw new Error(
+      "GO_API_BASE_URL must point at the Go API, not the BFF (would cause a proxy loop)",
+    );
+  }
+  return env;
 }

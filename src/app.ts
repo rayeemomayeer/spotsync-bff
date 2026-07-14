@@ -9,7 +9,7 @@ import rateLimit from "express-rate-limit";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
 import type { Env } from "./env.js";
-import { healthRouter } from "./routes/health.js";
+import { healthRouter, createReadyRouter } from "./routes/health.js";
 import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
 import { createNotifyRouter } from "./routes/notify.js";
@@ -62,6 +62,7 @@ export function createApp(env: Env): Express {
   app.use(express.urlencoded({ extended: false }));
 
   app.use(healthRouter);
+  app.use(createReadyRouter(env.GO_API_BASE_URL));
 
   app.use(
     "/api/notify",

@@ -6,7 +6,7 @@ services:
     region: oregon
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
-    healthCheckPath: /healthz
+    healthCheckPath: /readyz
     envVars:
       - key: NODE_ENV
         value: production
@@ -21,7 +21,7 @@ services:
       - key: FRONTEND_ORIGIN
         sync: false
       - key: GO_API_BASE_URL
-        sync: false
+        value: https://spotsync-ei6g.onrender.com
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRY_SECONDS

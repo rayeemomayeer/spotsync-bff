@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import type { Auth, Role } from "../auth.js";
 import { issueGoBridgeToken } from "../lib/go-jwt.js";
+import { UpstreamTimeoutError, upstreamFetch } from "../lib/upstream-fetch.js";
 import { createOptionalSession } from "../middleware/session.js";
 
 const HOP_BY_HOP = new Set([
@@ -14,6 +15,7 @@ const HOP_BY_HOP = new Set([
   "upgrade",
   "host",
   "content-length",
+  "cookie",
 ]);
 
 export function createProxyRouter(opts: {
@@ -87,7 +89,7 @@ export function createProxyRouter(opts: {
         }
       }
 
-      const upstream = await fetch(target, init);
+      const upstream = await upstreamFetch(target, init);
       const buf = Buffer.from(await upstream.arrayBuffer());
 
       res.status(upstream.status);
@@ -98,6 +100,15 @@ export function createProxyRouter(opts: {
       });
       res.send(buf);
     } catch (err) {
+      if (err instanceof UpstreamTimeoutError) {
+        console.error("[bff] upstream timeout", err.url);
+        res.status(504).json({
+          success: false,
+          message: "upstream timeout",
+          errors: { upstream: "Go API did not respond in time" },
+        });
+        return;
+      }
       next(err);
     }
   };
