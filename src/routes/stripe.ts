@@ -2,7 +2,7 @@ import { Router, type RequestHandler, json, raw } from "express";
 import Stripe from "stripe";
 import type { Auth } from "../auth.js";
 import { createRequireSession } from "../middleware/session.js";
-import { patchOrgBillingPlan } from "../lib/go-api.js";
+import { fetchOrgMe, patchOrgBillingPlan } from "../lib/go-api.js";
 import type { Env } from "../env.js";
 
 type PlanKey = "starter" | "growth";
@@ -39,11 +39,20 @@ export function createStripeRouter(opts: {
     }
 
     const role = req.sessionUser?.role;
-    if (role !== "saas_admin") {
+    const goUserId = req.sessionUser?.goUserId;
+    if (role !== "saas_admin" && role !== "org_admin") {
       res.status(403).json({
         success: false,
         message: "forbidden",
-        errors: { role: "saas_admin required" },
+        errors: { role: "saas_admin or org_admin required" },
+      });
+      return;
+    }
+    if (goUserId == null || goUserId < 1) {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { goUserId: "Go user link required for billing" },
       });
       return;
     }
@@ -71,16 +80,39 @@ export function createStripeRouter(opts: {
       return;
     }
 
+    let orgMeta: string | undefined;
+    if (role === "org_admin") {
+      const org = await fetchOrgMe(opts.env, goUserId, role);
+      if (!org) {
+        res.status(404).json({
+          success: false,
+          message: "organization not found",
+          errors: { organization: "no org membership" },
+        });
+        return;
+      }
+      if (org.status !== "active") {
+        res.status(403).json({
+          success: false,
+          message: "organization not approved",
+          errors: { organization: "approval required before subscribe" },
+        });
+        return;
+      }
+      orgMeta = String(org.id);
+    } else if (body.organization_id != null) {
+      orgMeta = String(body.organization_id);
+    }
+
     const origin = opts.frontendOrigin.replace(/\/$/, "");
-    const orgMeta =
-      body.organization_id != null ? String(body.organization_id) : undefined;
+    const successPath = role === "org_admin" ? "/org/billing" : "/platform/billing";
 
     try {
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
         line_items: [{ price, quantity: 1 }],
-        success_url: `${origin}/platform/billing?checkout=success`,
-        cancel_url: `${origin}/platform/billing?checkout=cancel`,
+        success_url: `${origin}${successPath}?checkout=success`,
+        cancel_url: `${origin}${successPath}?checkout=cancel`,
         client_reference_id: orgMeta,
         metadata: {
           plan,
@@ -182,6 +214,84 @@ export function createStripeRouter(opts: {
     res.status(200).json({ received: true });
   };
 
+  const portal: RequestHandler = async (req, res) => {
+    if (!stripe) {
+      res.status(503).json({
+        success: false,
+        message: "stripe not configured",
+        errors: { stripe: "STRIPE_SECRET_KEY missing" },
+      });
+      return;
+    }
+
+    const role = req.sessionUser?.role;
+    const goUserId = req.sessionUser?.goUserId;
+    if (role !== "saas_admin" && role !== "org_admin") {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { role: "saas_admin or org_admin required" },
+      });
+      return;
+    }
+    if (goUserId == null || goUserId < 1) {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { goUserId: "Go user link required" },
+      });
+      return;
+    }
+
+    let customerId: string | undefined;
+    if (role === "org_admin") {
+      const org = await fetchOrgMe(opts.env, goUserId, role);
+      if (!org?.stripe_customer_id) {
+        res.status(404).json({
+          success: false,
+          message: "no stripe customer",
+          errors: { stripe: "subscribe first" },
+        });
+        return;
+      }
+      customerId = org.stripe_customer_id;
+    } else {
+      const body = req.body as { stripe_customer_id?: string };
+      customerId = body.stripe_customer_id?.trim();
+    }
+
+    if (!customerId) {
+      res.status(400).json({
+        success: false,
+        message: "stripe customer required",
+        errors: { stripe_customer_id: "required for platform portal" },
+      });
+      return;
+    }
+
+    const origin = opts.frontendOrigin.replace(/\/$/, "");
+    const returnPath = role === "org_admin" ? "/org/billing" : "/platform/billing";
+
+    try {
+      const session = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: `${origin}${returnPath}`,
+      });
+      res.status(200).json({
+        success: true,
+        message: "portal session created",
+        data: { url: session.url },
+      });
+    } catch (err) {
+      console.error("[stripe] portal create failed", err);
+      res.status(502).json({
+        success: false,
+        message: "portal create failed",
+        errors: { stripe: err instanceof Error ? err.message : "unknown" },
+      });
+    }
+  };
+
   router.post(
     "/webhook",
     raw({ type: "application/json" }),
@@ -193,6 +303,13 @@ export function createStripeRouter(opts: {
     json(),
     createRequireSession(opts.auth),
     checkout,
+  );
+
+  router.post(
+    "/portal",
+    json(),
+    createRequireSession(opts.auth),
+    portal,
   );
 
   return router;

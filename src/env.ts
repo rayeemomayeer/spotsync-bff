@@ -47,5 +47,11 @@ export function loadEnv(): Env {
       "GO_API_BASE_URL must point at the Go API, not the BFF (would cause a proxy loop)",
     );
   }
+  const stripeKey = env.STRIPE_SECRET_KEY.trim();
+  if (stripeKey.startsWith("sk_live_")) {
+    throw new Error(
+      "STRIPE_SECRET_KEY must be test mode only (sk_test_*); live keys are forbidden",
+    );
+  }
   return env;
 }
