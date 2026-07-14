@@ -12,6 +12,7 @@ import type { Env } from "./env.js";
 import { healthRouter, createReadyRouter } from "./routes/health.js";
 import { createProxyRouter } from "./routes/proxy.js";
 import { createStripeRouter } from "./routes/stripe.js";
+import { createCheckoutRouter } from "./routes/checkout.js";
 import { createNotifyRouter } from "./routes/notify.js";
 
 export function createApp(env: Env): Express {
@@ -55,6 +56,15 @@ export function createApp(env: Env): Express {
       frontendOrigin: env.FRONTEND_ORIGIN,
       priceStarter: env.STRIPE_PRICE_STARTER,
       priceGrowth: env.STRIPE_PRICE_GROWTH,
+    }),
+  );
+
+  app.use(
+    "/api",
+    createCheckoutRouter({
+      auth,
+      env,
+      secretKey: env.STRIPE_SECRET_KEY,
     }),
   );
 

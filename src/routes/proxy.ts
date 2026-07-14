@@ -44,6 +44,27 @@ export function createProxyRouter(opts: {
         return;
       }
 
+      const pathOnly = (req.url || "/").split("?")[0] ?? "/";
+      if (
+        req.method.toUpperCase() === "POST" &&
+        pathOnly === "/reservations" &&
+        user?.role === "driver"
+      ) {
+        const demoHeader = req.headers["x-demo-reservation"];
+        const demo =
+          demoHeader === "true" ||
+          demoHeader === "1" ||
+          (Array.isArray(demoHeader) && (demoHeader[0] === "true" || demoHeader[0] === "1"));
+        if (!demo) {
+          res.status(403).json({
+            success: false,
+            message: "use checkout flow",
+            errors: { payment: "POST /api/checkout/payment-intent required" },
+          });
+          return;
+        }
+      }
+
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
         if (value == null || HOP_BY_HOP.has(key.toLowerCase())) continue;

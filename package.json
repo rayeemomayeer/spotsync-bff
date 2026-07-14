@@ -11,7 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@sentry/node": "^10.65.0",
@@ -32,6 +33,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "vitest": "^3.2.7"
   }
 }

@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import type { Auth } from "../auth.js";
 import { createRequireSession } from "../middleware/session.js";
 import { fetchOrgMe, patchOrgBillingPlan } from "../lib/go-api.js";
+import { fulfillDriverPaymentIntent } from "./checkout.js";
 import type { Env } from "../env.js";
 
 type PlanKey = "starter" | "growth";
@@ -206,6 +207,19 @@ export function createStripeRouter(opts: {
         } catch (err) {
           console.error("[stripe] failed to persist org plan", err);
           res.status(502).json({ received: false, error: "plan persistence failed" });
+          return;
+        }
+      }
+    }
+
+    if (event.type === "payment_intent.succeeded") {
+      const intent = event.data.object as Stripe.PaymentIntent;
+      if (intent.metadata?.zone_id) {
+        try {
+          await fulfillDriverPaymentIntent(opts.env, intent);
+        } catch (err) {
+          console.error("[stripe] driver payment fulfillment failed", err);
+          res.status(502).json({ received: false, error: "reservation fulfillment failed" });
           return;
         }
       }
