@@ -17,6 +17,7 @@ import { createCheckoutRouter } from "./routes/checkout.js";
 import { createDemoRouter } from "./routes/demo.js";
 import { createNotifyRouter } from "./routes/notify.js";
 import { createPlatformUsersRouter } from "./routes/platform-users.js";
+import { createOrgApplyRouter } from "./routes/org-apply.js";
 import { attachDemoHeaders } from "./middleware/demo.js";
 
 export function createApp(env: Env): Express {
@@ -96,6 +97,11 @@ export function createApp(env: Env): Express {
   );
 
   app.use("/api/platform", createPlatformUsersRouter({ auth, pool: platformPool }));
+
+  app.use(
+    "/api/orgs",
+    createOrgApplyRouter({ auth, env, pool: platformPool }),
+  );
 
   app.use(
     "/api/v1",
