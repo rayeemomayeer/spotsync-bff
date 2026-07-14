@@ -126,13 +126,22 @@ export async function createGoReservation(
   goUserId: number,
   body: { zone_id: number; license_plate: string; spot_id?: number },
   idempotencyKey: string,
+  opts?: { demoMode?: boolean; demoSessionId?: string },
 ): Promise<GoReservation> {
+  const headers: Record<string, string> = { "Idempotency-Key": idempotencyKey };
+  if (opts?.demoMode) {
+    headers["X-Demo-Mode"] = "true";
+    headers["X-Demo-Reservation"] = "true";
+    if (opts.demoSessionId) {
+      headers["X-Demo-Session-Id"] = opts.demoSessionId;
+    }
+  }
   const res = await goFetch(env, "/api/v1/reservations", {
     method: "POST",
     goUserId,
     role: "driver",
     body: JSON.stringify(body),
-    headers: { "Idempotency-Key": idempotencyKey },
+    headers,
   });
   return parseGoData<GoReservation>(res, "go reservation create failed");
 }

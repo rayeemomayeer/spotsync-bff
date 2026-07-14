@@ -258,8 +258,108 @@ export function createCheckoutRouter(opts: {
     }
   };
 
+  const demoConfirm: RequestHandler = async (req, res) => {
+    const demoMode = req.headers["x-demo-mode"];
+    const demo =
+      demoMode === "true" ||
+      demoMode === "1" ||
+      (Array.isArray(demoMode) && (demoMode[0] === "true" || demoMode[0] === "1"));
+    if (!demo) {
+      res.status(403).json({
+        success: false,
+        message: "demo mode required",
+        errors: { demo: "enable demo mode" },
+      });
+      return;
+    }
+
+    const user = req.sessionUser;
+    if (!user || user.role !== "driver") {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { role: "driver required" },
+      });
+      return;
+    }
+    if (user.goUserId == null || user.goUserId < 1) {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { goUserId: "Go user link required" },
+      });
+      return;
+    }
+
+    const body = req.body as {
+      zone_id?: number | string;
+      duration_hours?: number | string;
+      license_plate?: string;
+      spot_id?: number | string;
+    };
+    const zoneId = Number(body.zone_id);
+    const spotIdRaw = body.spot_id != null ? Number(body.spot_id) : undefined;
+    const durationHours = Number(body.duration_hours ?? 1);
+    const plate = body.license_plate?.trim() ?? "";
+    if (!Number.isFinite(zoneId) || zoneId < 1 || plate.length < 1) {
+      res.status(400).json({
+        success: false,
+        message: "invalid checkout payload",
+        errors: { zone_id: "required", license_plate: "required" },
+      });
+      return;
+    }
+
+    try {
+      const zone = await fetchGoZone(opts.env, zoneId);
+      const amountCents = quoteAmountCents(zone.price_per_hour, durationHours);
+      const intentId = `demo_pi_${Date.now()}`;
+      const reservationBody: {
+        zone_id: number;
+        license_plate: string;
+        spot_id?: number;
+      } = { zone_id: zoneId, license_plate: plate };
+      if (spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0) {
+        reservationBody.spot_id = spotIdRaw;
+      }
+      const reservation = await createGoReservation(
+        opts.env,
+        user.goUserId,
+        reservationBody,
+        intentId,
+        {
+          demoMode: true,
+          demoSessionId: String(req.headers["x-demo-session-id"] ?? ""),
+        },
+      );
+      const payment = await recordGoPayment(opts.env, user.goUserId, {
+        reservation_id: reservation.id,
+        stripe_payment_intent_id: intentId,
+        amount_cents: amountCents,
+        currency: "usd",
+      });
+      res.status(200).json({
+        success: true,
+        message: "demo reservation confirmed",
+        data: {
+          reservation_id: reservation.id,
+          payment_id: payment.id,
+          amount_cents: amountCents,
+        },
+      });
+    } catch (err) {
+      console.error("[checkout] demo-confirm failed", err);
+      res.status(502).json({
+        success: false,
+        message: "demo confirm failed",
+        errors: { checkout: err instanceof Error ? err.message : "unknown" },
+      });
+    }
+  };
+
   router.post("/checkout/quote", json(), createRequireSession(opts.auth), quote);
   router.post("/checkout/payment-intent", json(), createRequireSession(opts.auth), paymentIntent);
+  router.post("/checkout/demo-confirm", json(), createRequireSession(opts.auth), demoConfirm);
   router.post(
     "/payments/:id/refund",
     json(),

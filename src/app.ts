@@ -15,6 +15,7 @@ import { createStripeRouter } from "./routes/stripe.js";
 import { createCheckoutRouter } from "./routes/checkout.js";
 import { createDemoRouter } from "./routes/demo.js";
 import { createNotifyRouter } from "./routes/notify.js";
+import { attachDemoHeaders } from "./middleware/demo.js";
 
 export function createApp(env: Env): Express {
   const app = express();
@@ -62,6 +63,7 @@ export function createApp(env: Env): Express {
 
   app.use(
     "/api",
+    attachDemoHeaders(),
     createCheckoutRouter({
       auth,
       env,
@@ -90,6 +92,7 @@ export function createApp(env: Env): Express {
 
   app.use(
     "/api/v1",
+    attachDemoHeaders(),
     createProxyRouter({
       auth,
       goApiBaseUrl: env.GO_API_BASE_URL,
