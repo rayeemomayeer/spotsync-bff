@@ -32,6 +32,17 @@ export function createApp(env: Env): Express {
 
   app.set("trust proxy", 1);
 
+  // Better Auth error redirects can land on BFF origin with ?error=...
+  // Send users back to the Vercel app instead of a JSON 404.
+  app.get("/", (req, res) => {
+    const frontend = env.FRONTEND_ORIGIN.replace(/\/$/, "");
+    const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+    const target = qs.includes("error=")
+      ? `${frontend}/login${qs}`
+      : `${frontend}/`;
+    res.redirect(302, target);
+  });
+
   app.use(
     helmet({
       contentSecurityPolicy: false,

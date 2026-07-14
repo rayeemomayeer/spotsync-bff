@@ -48,6 +48,14 @@ export function createAuth(env: Env) {
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     trustedOrigins: [env.FRONTEND_ORIGIN],
+    // Cross-origin OAuth (Vercel app → Render BFF → Google → BFF callback):
+    // Partitioned session cookies live under the frontend top-level site and are
+    // missing on the BFF callback navigation. Store state in DB and skip the
+    // cookie-only CSRF check (redirect_uri + DB state still protect the flow).
+    account: {
+      storeStateStrategy: "database",
+      skipStateCookieCheck: true,
+    },
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
@@ -87,6 +95,17 @@ export function createAuth(env: Env) {
         secure: env.NODE_ENV === "production",
         httpOnly: true,
         partitioned: env.NODE_ENV === "production",
+      },
+      cookies: {
+        // OAuth state must not be CHIPS-partitioned — callback is top-level on BFF.
+        state: {
+          attributes: {
+            sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+            secure: env.NODE_ENV === "production",
+            httpOnly: true,
+            partitioned: false,
+          },
+        },
       },
     },
     user: {
