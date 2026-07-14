@@ -150,7 +150,12 @@ export function createAuth(env: Env) {
     },
     hooks: {
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/sign-in/email") return;
+        const path = ctx.path ?? "";
+        const isAuthLinkPath =
+          path === "/sign-in/email" ||
+          path === "/sign-in/social" ||
+          path.startsWith("/callback/");
+        if (!isAuthLinkPath) return;
 
         const session = ctx.context.newSession;
         if (!session) return;
@@ -169,13 +174,17 @@ export function createAuth(env: Env) {
         }
 
         const body = ctx.body as { password?: string } | undefined;
-        if (!body?.password) return;
+        // Email login has password. Social / re-link needs a bridge mint.
+        const password =
+          typeof body?.password === "string" && body.password.length >= 8
+            ? body.password
+            : mintBridgePassword();
 
         try {
           const goUserId = await ensureGoUserId(env.GO_API_BASE_URL, {
             name: user.name || "",
             email: user.email,
-            password: body.password,
+            password,
           });
           await pool.query(
             `UPDATE "user" SET "goUserId" = $1 WHERE id = $2`,
