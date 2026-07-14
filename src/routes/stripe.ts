@@ -28,6 +28,53 @@ function orgIdFromStripeMeta(
   return parseOrgId(meta?.organization_id ?? clientReferenceId);
 }
 
+/** Monthly cents from a subscription line item (yearly → /12). */
+export function subscriptionItemMonthlyCents(item: Stripe.SubscriptionItem): number {
+  const price = item.price;
+  const unit = price.unit_amount ?? 0;
+  const qty = item.quantity ?? 1;
+  const total = unit * qty;
+  const interval = price.recurring?.interval;
+  const count = price.recurring?.interval_count ?? 1;
+  if (interval === "year") {
+    return Math.round(total / (12 * count));
+  }
+  if (interval === "month") {
+    return Math.round(total / count);
+  }
+  if (interval === "week") {
+    return Math.round((total * 52) / (12 * count));
+  }
+  if (interval === "day") {
+    return Math.round((total * 365) / (12 * count));
+  }
+  return 0;
+}
+
+export async function computeStripeMrrCents(stripe: Stripe): Promise<{
+  mrr_cents: number;
+  subscription_count: number;
+  currency: string;
+}> {
+  let mrr = 0;
+  let count = 0;
+  let currency = "usd";
+  for (const status of ["active", "trialing"] as const) {
+    for await (const sub of stripe.subscriptions.list({
+      status,
+      limit: 100,
+      expand: ["data.items.data.price"],
+    })) {
+      count += 1;
+      for (const item of sub.items.data) {
+        mrr += subscriptionItemMonthlyCents(item);
+        if (item.price.currency) currency = item.price.currency;
+      }
+    }
+  }
+  return { mrr_cents: mrr, subscription_count: count, currency };
+}
+
 export function createStripeRouter(opts: {
   auth: Auth;
   env: Env;
@@ -189,6 +236,43 @@ export function createStripeRouter(opts: {
       res.status(502).json({
         success: false,
         message: "checkout create failed",
+        errors: { stripe: err instanceof Error ? err.message : "unknown" },
+      });
+    }
+  };
+
+  const mrr: RequestHandler = async (req, res) => {
+    if (!stripe) {
+      res.status(503).json({
+        success: false,
+        message: "stripe not configured",
+        errors: { stripe: "STRIPE_SECRET_KEY missing" },
+      });
+      return;
+    }
+    if (req.sessionUser?.role !== "saas_admin") {
+      res.status(403).json({
+        success: false,
+        message: "forbidden",
+        errors: { role: "saas_admin required" },
+      });
+      return;
+    }
+    try {
+      const data = await computeStripeMrrCents(stripe);
+      res.status(200).json({
+        success: true,
+        message: "stripe mrr",
+        data: {
+          ...data,
+          source: "stripe_subscriptions",
+        },
+      });
+    } catch (err) {
+      console.error("[stripe] mrr failed", err);
+      res.status(502).json({
+        success: false,
+        message: "mrr fetch failed",
         errors: { stripe: err instanceof Error ? err.message : "unknown" },
       });
     }
@@ -425,6 +509,12 @@ export function createStripeRouter(opts: {
     checkout,
   );
 
+  router.get(
+    "/mrr",
+    createRequireSession(opts.auth),
+    mrr,
+  );
+
   router.post(
     "/portal",
     json(),
@@ -446,11 +536,6 @@ const PLAN_NAME: Record<PlanKey, string> = {
   growth: "SpotSync Growth",
 };
 
-/**
- * Prefer Dashboard price IDs when they belong to the same Stripe account as
- * STRIPE_SECRET_KEY. Otherwise fall back to inline price_data (avoids 502
- * when Price IDs were created in a different Stripe account).
- */
 async function createSubscriptionCheckout(
   stripe: Stripe,
   opts: {
