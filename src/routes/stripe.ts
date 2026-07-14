@@ -2,11 +2,14 @@ import { Router, type RequestHandler, json, raw } from "express";
 import Stripe from "stripe";
 import type { Auth } from "../auth.js";
 import { createRequireSession } from "../middleware/session.js";
+import { patchOrgBillingPlan } from "../lib/go-api.js";
+import type { Env } from "../env.js";
 
 type PlanKey = "starter" | "growth";
 
 export function createStripeRouter(opts: {
   auth: Auth;
+  env: Env;
   secretKey: string;
   webhookSecret: string;
   frontendOrigin: string;
@@ -154,6 +157,28 @@ export function createStripeRouter(opts: {
           ? (event.data.object as Stripe.Checkout.Session).metadata?.plan
           : undefined,
     });
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const plan = session.metadata?.plan;
+      const orgRaw = session.metadata?.organization_id ?? session.client_reference_id;
+      const orgId = orgRaw ? Number(orgRaw) : NaN;
+      if ((plan === "starter" || plan === "growth") && Number.isFinite(orgId) && orgId > 0) {
+        try {
+          await patchOrgBillingPlan(
+            opts.env,
+            orgId,
+            plan,
+            typeof session.customer === "string" ? session.customer : session.customer?.id,
+          );
+        } catch (err) {
+          console.error("[stripe] failed to persist org plan", err);
+          res.status(502).json({ received: false, error: "plan persistence failed" });
+          return;
+        }
+      }
+    }
+
     res.status(200).json({ received: true });
   };
 

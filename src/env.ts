@@ -23,6 +23,9 @@ const envSchema = z.object({
     .refine((v) => v === "" || z.string().url().safeParse(v).success, {
       message: "Invalid url",
     }),
+  GOOGLE_CLIENT_ID: z.string().optional().default(""),
+  GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
+  GO_PLATFORM_USER_ID: z.coerce.number().int().positive().default(1),
   NOTIFY_INTERNAL_TOKEN: z.string().optional().default(""),
 });
 

@@ -21,6 +21,9 @@ export function createAuth(env: Env) {
     connectionTimeoutMillis: 5_000,
   });
 
+  const googleEnabled =
+    env.GOOGLE_CLIENT_ID.length > 0 && env.GOOGLE_CLIENT_SECRET.length > 0;
+
   return betterAuth({
     database: pool,
     secret: env.BETTER_AUTH_SECRET,
@@ -30,6 +33,16 @@ export function createAuth(env: Env) {
       enabled: true,
       minPasswordLength: 8,
     },
+    ...(googleEnabled
+      ? {
+          socialProviders: {
+            google: {
+              clientId: env.GOOGLE_CLIENT_ID,
+              clientSecret: env.GOOGLE_CLIENT_SECRET,
+            },
+          },
+        }
+      : {}),
     // Cross-origin: Vercel app → Render BFF. Lax cookies are dropped by browsers.
     advanced: {
       defaultCookieAttributes: {
