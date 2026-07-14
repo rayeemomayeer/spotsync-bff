@@ -88,24 +88,16 @@ export function createAuth(env: Env) {
           },
         }
       : {}),
-    // Cross-origin: Vercel app → Render BFF. Lax cookies are dropped by browsers.
+    // Cross-origin: Vercel app → Render BFF.
+    // Do NOT use Partitioned (CHIPS): Google OAuth sets the session cookie on a
+    // top-level BFF navigation; a Partitioned cookie would live in the BFF
+    // partition and never be sent when the Vercel app calls getSession.
+    // SameSite=None + Secure is enough for credentialed cross-site fetches.
     advanced: {
       defaultCookieAttributes: {
         sameSite: env.NODE_ENV === "production" ? "none" : "lax",
         secure: env.NODE_ENV === "production",
         httpOnly: true,
-        partitioned: env.NODE_ENV === "production",
-      },
-      cookies: {
-        // OAuth state must not be CHIPS-partitioned — callback is top-level on BFF.
-        state: {
-          attributes: {
-            sameSite: env.NODE_ENV === "production" ? "none" : "lax",
-            secure: env.NODE_ENV === "production",
-            httpOnly: true,
-            partitioned: false,
-          },
-        },
       },
     },
     user: {
