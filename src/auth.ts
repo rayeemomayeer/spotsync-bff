@@ -52,9 +52,18 @@ export function createAuth(env: Env) {
     // Partitioned session cookies live under the frontend top-level site and are
     // missing on the BFF callback navigation. Store state in DB and skip the
     // cookie-only CSRF check (redirect_uri + DB state still protect the flow).
+    //
+    // Account linking: users often sign up with email first, then try Google with
+    // the same address. Without trustedProviders, Better Auth returns
+    // account_not_linked and the login page shows a generic Google failure.
     account: {
       storeStateStrategy: "database",
       skipStateCookieCheck: true,
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"],
+        allowDifferentEmails: false,
+      },
     },
     emailAndPassword: {
       enabled: true,
