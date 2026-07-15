@@ -11,6 +11,7 @@ import {
   recordGoPayment,
   recordGoRefund,
 } from "../lib/go-api.js";
+import { notifyQuiet } from "../lib/notify.js";
 
 export function quoteAmountCents(pricePerHour: number, durationHours: number): number {
   const hours = Math.max(1, Math.min(24, durationHours));
@@ -138,6 +139,7 @@ export function createCheckoutRouter(opts: {
         go_user_id: String(user.goUserId),
         license_plate: plate,
         duration_hours: String(hours),
+        driver_email: user.email,
       };
       if (spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0) {
         metadata.spot_id = String(spotIdRaw);
@@ -315,6 +317,14 @@ export function createCheckoutRouter(opts: {
         console.warn("[checkout] reservation cancel after refund", cancelErr);
       }
 
+      void notifyQuiet(opts.env, {
+        type: "refund_confirmation",
+        email: user.email,
+        reservation_id: String(reservationId),
+        amount_cents: String(payment.amount_cents),
+        user_id: String(user.goUserId),
+      });
+
       res.status(200).json({
         success: true,
         message: "refund processed",
@@ -412,6 +422,19 @@ export function createCheckoutRouter(opts: {
         stripe_payment_intent_id: intentId,
         amount_cents: amountCents,
         currency: "usd",
+      });
+      void notifyQuiet(opts.env, {
+        type: "payment_receipt",
+        email: user.email,
+        zone_id: String(zoneId),
+        reservation_id: String(reservation.id),
+        license_plate: plate,
+        amount_cents: String(amountCents),
+        user_id: String(user.goUserId),
+        spot_id:
+          spotIdRaw != null && Number.isFinite(spotIdRaw) && spotIdRaw > 0
+            ? String(spotIdRaw)
+            : undefined,
       });
       res.status(200).json({
         success: true,
@@ -517,4 +540,19 @@ async function fulfillDriverPaid(
     amount_cents: amountCents,
     currency,
   });
+
+  const driverEmail = meta.driver_email?.trim();
+  if (driverEmail) {
+    void notifyQuiet(env, {
+      type: "payment_receipt",
+      email: driverEmail,
+      zone_id: String(zoneId),
+      reservation_id: String(reservation.id),
+      license_plate: plate,
+      amount_cents: String(amountCents),
+      user_id: String(goUserId),
+      spot_id:
+        spotRaw != null && Number.isFinite(spotRaw) && spotRaw > 0 ? String(spotRaw) : undefined,
+    });
+  }
 }

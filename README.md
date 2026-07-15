@@ -41,8 +41,11 @@ Signed HS256 with `JWT_SECRET` (same secret Go uses).
 |--------|------|--------|
 | * | `/api/auth/*` | Better Auth handler |
 | GET | `/healthz` | Liveness |
-| * | `/api/v1/*` | Session required → Go proxy |
-| POST | `/api/stripe/webhook` | Stripe TEST webhook stub |
+| GET | `/api/session/go-token` | Session → longer-lived Go JWT for SPA |
+| * | `/api/v1/*` | Optional session → Go proxy (bridge JWT) |
+| POST | `/api/checkout/*` | Driver quote / Checkout / demo-confirm / refund |
+| POST | `/api/stripe/*` | Org subscription + webhook (test mode) |
+| POST | `/api/stripe/webhook` | Stripe TEST webhook |
 | POST | `/api/notify` | Optional forward to spotsync-notify |
 
 ## Notify forward (optional)

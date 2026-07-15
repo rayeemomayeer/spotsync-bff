@@ -8,11 +8,31 @@ export type NotifyPayload = {
   user_id?: string;
   reservation_id?: string;
   license_plate?: string;
+  amount_cents?: string;
   reset_url?: string;
   verify_url?: string;
   invite_url?: string;
   org_name?: string;
 };
+
+/** Best-effort — never throws into payment path. */
+export async function notifyQuiet(
+  env: { NOTIFY_URL: string; NOTIFY_INTERNAL_TOKEN: string },
+  payload: NotifyPayload,
+): Promise<void> {
+  if (!env.NOTIFY_URL || !env.NOTIFY_INTERNAL_TOKEN) {
+    console.info("[notify] skipped (NOTIFY unset)", payload.type);
+    return;
+  }
+  try {
+    const result = await forwardNotify(env.NOTIFY_URL, env.NOTIFY_INTERNAL_TOKEN, payload);
+    if (!result.ok) {
+      console.error("[notify] failed", payload.type, result.status, result.body);
+    }
+  } catch (err) {
+    console.error("[notify] error", payload.type, err);
+  }
+}
 
 export async function forwardNotify(
   baseUrl: string,
